@@ -160,6 +160,8 @@ $$;
 
 ```sql
 CALL recalculate_standings();
+
+SELECT * FROM kr1_Standings ORDER BY team_id;
 ```
 
 ---
@@ -200,6 +202,19 @@ $$;
 
 ```sql
 CALL reset_team_standing(1);
+
+SELECT
+    t.name,
+    s.games_played,
+    s.wins,
+    s.draws,
+    s.losses,
+    s.goals_for,
+    s.goals_against,
+    s.points
+FROM kr1_Standings s
+JOIN kr1_Teams t ON t.team_id = s.team_id
+WHERE s.team_id = 1;
 ```
 
 ---
@@ -227,6 +242,14 @@ $$;
 
 ```sql
 CALL delete_old_scheduled_matches('2024-01-01');
+
+SELECT
+    match_id,
+    match_date,
+    status
+FROM kr1_Matches
+WHERE status = 'scheduled'
+ORDER BY match_date;
 ```
 
 ---

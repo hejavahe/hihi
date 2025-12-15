@@ -1,3 +1,61 @@
+# **1.2 Триггер: контроль диапазона capacity (1000–120000)**
+
+Создать триггер, который запрещает вставку и изменение записей в таблицу Stadiums, если значение capacity находится вне диапазона от 1000 до 120000:
+— создать триггерную функцию, которая выполняет проверку;
+— создать триггер BEFORE INSERT OR UPDATE на таблицу Stadiums;
+— при нарушении ограничений на вставляемые значения триггер должен выбрасывать понятное исключение.
+Продемонстрировать работу триггера на примерах DML-операций, которые как успешно выполняются, так и корректно прерываются триггером (два запроса).
+
+## **Триггерная функция**
+
+```sql
+CREATE OR REPLACE FUNCTION kr1_check_stadium_capacity()
+RETURNS trigger AS $$
+BEGIN
+    IF NEW.capacity < 1000 OR NEW.capacity > 120000 THEN
+        RAISE EXCEPTION
+            'Вместимость стадиона должна быть в диапазоне от 1000 до 120000';
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+## **Триггер**
+
+```sql
+CREATE TRIGGER trg_check_stadium_capacity
+BEFORE INSERT OR UPDATE ON kr1_Stadiums
+FOR EACH ROW
+EXECUTE FUNCTION kr1_check_stadium_capacity();
+```
+
+## **Демонстрация**
+
+❌ Ошибка:
+
+```sql
+INSERT INTO kr1_Stadiums (name, capacity, city)
+VALUES ('Test Stadium', 500, 'Test City');
+```
+
+Результат:
+
+```
+ERROR:  Вместимость стадиона должна быть в диапазоне от 1000 до 120000
+```
+
+✅ Успех:
+
+```sql
+UPDATE kr1_Stadiums
+SET capacity = 50000
+WHERE stadium_id = 1;
+```
+
+---
+
 ## **1.3 Триггер: запрет scheduled-матча в прошлом**
 
 Создать триггер, который запрещает вставлять матч со статусом scheduled, если его дата проведения раньше текущего момента:
@@ -162,6 +220,71 @@ $$;
 CALL recalculate_standings();
 
 SELECT * FROM kr1_Standings ORDER BY team_id;
+```
+
+---
+
+# **2.3 Процедура `set_stadium_capacity`**
+
+Создать процедуру set_stadium_capacity(), которая изменяет вместимость выбранного стадиона:
+— процедура должна принимать stadium_id и новое значение вместимости;
+— если стадион не найден — генерировать понятную ошибку.
+— если переданное значение вместимости НЕ находится в диапазоне от 1000 до 12000 — генерировать понятную ошибку
+Привести пример вызова процедуры.
+
+## **Процедура**
+
+```sql
+CREATE OR REPLACE PROCEDURE set_stadium_capacity(
+    p_stadium_id INTEGER,
+    p_capacity INTEGER
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF p_capacity < 1000 OR p_capacity > 12000 THEN
+        RAISE EXCEPTION
+            'Вместимость должна быть в диапазоне от 1000 до 12000';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM kr1_Stadiums WHERE stadium_id = p_stadium_id
+    ) THEN
+        RAISE EXCEPTION
+            'Стадион с stadium_id % не найден', p_stadium_id;
+    END IF;
+
+    UPDATE kr1_Stadiums
+    SET capacity = p_capacity
+    WHERE stadium_id = p_stadium_id;
+END;
+$$;
+```
+
+## **Примеры вызова**
+
+✅ Успех:
+
+```sql
+CALL set_stadium_capacity(1, 60000);
+```
+
+❌ Ошибка (неверный диапазон):
+
+```sql
+CALL set_stadium_capacity(1, 500);
+```
+
+Результат:
+
+```
+ERROR:  Вместимость должна быть в диапазоне от 1000 до 12000
+```
+
+❌ Ошибка (стадион не найден):
+
+```sql
+CALL set_stadium_capacity(999, 5000);
 ```
 
 ---
@@ -394,4 +517,93 @@ DELETE FROM kr1_Stadiums WHERE stadium_id = 1;
 UPDATE kr1_Stadiums
 SET capacity = capacity + 1000
 WHERE stadium_id = 1;
+```
+
+---
+
+# **3.5 Защита завершённых матчей от изменений**
+
+Реализовать триггер, который защищает завершённые матчи от изменений:
+3.1 Создать триггерную функцию, где используется переменная TG_OP для определения типа операции (INSERT, UPDATE, DELETE). Для операции UPDATE обеспечить:
+— запрещать изменение статуса с 'completed' на любой другой.
+Для операции DELETE запретить:
+— удаление записей, у которых status = 'completed'.
+3.2 Создать триггер:
+— BEFORE UPDATE OR DELETE на таблицу Matches,
+— который вызывает функцию, созданную в пункте 3.1
+3.3 Продемонстрировать работу триггера на примерах DML-операций, которые как успешно выполняются, так и корректно прерываются триггером (два запроса).
+
+## **Триггерная функция**
+
+```sql
+CREATE OR REPLACE FUNCTION kr1_protect_completed_matches()
+RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        IF OLD.status = 'completed'
+           AND NEW.status <> 'completed' THEN
+            RAISE EXCEPTION
+                'Запрещено изменять статус завершённого матча';
+        END IF;
+    END IF;
+
+    IF TG_OP = 'DELETE' THEN
+        IF OLD.status = 'completed' THEN
+            RAISE EXCEPTION
+                'Запрещено удалять завершённые матчи';
+        END IF;
+        RETURN OLD;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+## **Триггер**
+
+```sql
+CREATE TRIGGER trg_protect_completed_matches
+BEFORE UPDATE OR DELETE ON kr1_Matches
+FOR EACH ROW
+EXECUTE FUNCTION kr1_protect_completed_matches();
+```
+
+---
+
+## **Демонстрация**
+
+❌ Ошибка (UPDATE):
+
+```sql
+UPDATE kr1_Matches
+SET status = 'scheduled'
+WHERE match_id = 1;
+```
+
+Результат:
+
+```
+ERROR:  Запрещено изменять статус завершённого матча
+```
+
+❌ Ошибка (DELETE):
+
+```sql
+DELETE FROM kr1_Matches
+WHERE match_id = 1;
+```
+
+Результат:
+
+```
+ERROR:  Запрещено удалять завершённые матчи
+```
+
+✅ Успех:
+
+```sql
+UPDATE kr1_Matches
+SET match_date = match_date + INTERVAL '1 day'
+WHERE status = 'scheduled';
 ```

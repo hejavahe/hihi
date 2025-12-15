@@ -224,7 +224,7 @@ SELECT * FROM kr1_Standings ORDER BY team_id;
 
 ---
 
-# **2.3 Процедура `set_stadium_capacity`**
+# **2.2 Процедура `set_stadium_capacity`**
 
 Создать процедуру set_stadium_capacity(), которая изменяет вместимость выбранного стадиона:
 — процедура должна принимать stadium_id и новое значение вместимости;
@@ -285,6 +285,47 @@ ERROR:  Вместимость должна быть в диапазоне от 
 
 ```sql
 CALL set_stadium_capacity(999, 5000);
+```
+
+---
+
+## **2.3**
+
+Реализовать хранимую процедуру register_match_result которая регистрирует результат матча:
+— принимает на вход match_id, home_score, away_score;
+— проверяет неотрицательность счета матча;
+— обновляет счёт (home_score, away_score) в таблице Matches;
+— устанавливает статус 'completed';
+— если матч с указанным match_id не найден, генерирует ошибку.
+Привести пример вызова процедуры.
+
+```
+CREATE OR REPLACE PROCEDURE register_match_result(
+    match_id INTEGER,
+    home_score INTEGER,
+    away_score INTEGER
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF home_score < 0 OR away_score < 0 THEN
+        RAISE EXCEPTION 'Счёт матча не может быть отрицательным';
+    END IF;
+
+    UPDATE kr2_Matches
+    SET
+        home_score = register_match_result.home_score,
+        away_score = register_match_result.away_score,
+        status = 'completed'
+    WHERE kr2_Matches.match_id = register_match_result.match_id; 
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Матч с ID % не найден', register_match_result.match_id;
+    END IF;
+END;
+$$;
+
+CALL register_match_result(2, 52, 2);
 ```
 
 ---
@@ -517,6 +558,43 @@ DELETE FROM kr1_Stadiums WHERE stadium_id = 1;
 UPDATE kr1_Stadiums
 SET capacity = capacity + 1000
 WHERE stadium_id = 1;
+```
+
+---
+
+## **3.4**
+
+Реализовать триггер, который запрещает менять счёт в завершённом матче:
+3.1 Создать триггерную функцию, где используется переменная TG_OP для определения типа операции (INSERT, UPDATE, DELETE). Для операции UPDATE обеспечить:
+— если OLD.status = 'completed' и счёт (home_score, away_score) изменяется, выбрасывать ошибку.
+3.2 Создать триггер:
+— BEFORE UPDATE на таблицу Matches,
+— который вызывает функцию, созданную в пункте 3.1
+3.3 Продемонстрировать работу триггера на примерах DML-операций, которые как успешно выполняются, так и корректно прерываются триггером (два запроса).
+
+```
+CREATE OR REPLACE FUNCTION prevent_score_change_in_completed_match()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        IF OLD.status = 'completed' AND (OLD.home_score <> NEW.home_score OR OLD.away_score <> NEW.away_score) THEN
+            RAISE EXCEPTION 'Cannot change score of a completed match (match_id: %)', OLD.match_id;
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_prevent_completed_match_score_change
+BEFORE UPDATE ON kr2_Matches
+FOR EACH ROW
+EXECUTE FUNCTION prevent_score_change_in_completed_match();
+
+-- Успех
+UPDATE kr2_Matches SET status = 'scheduled' WHERE match_id = 1;
+
+-- Прерывает триггер
+UPDATE kr2_Matches SET home_score = 99 WHERE match_id = 1;
 ```
 
 ---
